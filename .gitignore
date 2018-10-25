@@ -4,3 +4,4 @@
 __pycache__
 local_scripts/*
 libs/xEisner/build-*
+deepbank1_1_hrg_scripts/*

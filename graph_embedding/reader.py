@@ -7,7 +7,7 @@ from dataclasses import dataclass, field
 
 from hrgguru.hrg import CFGRule
 from hrgguru.hyper_graph import strip_category, HyperEdge
-from vocab_utils import Dictionary
+from data_utils.vocab_utils import Dictionary
 
 
 @dataclass

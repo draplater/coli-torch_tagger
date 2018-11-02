@@ -75,9 +75,9 @@ class GraphRNNEncoder(nn.Module):
     class Options(object):
         use_property_embeddings: bool = True
         num_rnn_layers: int = 3
-        dropout_rate: float = 0.2
+        dropout_rate: float = 0.33
         word_vector_trainable: bool = True
-        model_hidden_size: int = 512
+        model_hidden_size: int = 256
 
         compress_node_embedding: bool = False
         compressed_embedding_dim: int = 100

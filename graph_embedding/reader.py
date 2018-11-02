@@ -35,6 +35,10 @@ class GraphEmbeddingStatisticsBase(object):
         # noinspection PyUnresolvedReferences
         return cls.__dataclass_fields__[prop_name].metadata["embedding_dim"]
 
+    def read_sync_rule_and_update(self, sync_rule: CFGRule,
+                                  allow_new=True):
+        raise NotImplementedError
+
 
 @dataclass
 class GraphEmbeddingStatistics(GraphEmbeddingStatisticsBase):

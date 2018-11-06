@@ -5,8 +5,8 @@ from collections import defaultdict
 import dataclasses
 from dataclasses import dataclass, field
 
-from hrgguru.hrg import CFGRule
-from hrgguru.hyper_graph import strip_category, HyperEdge
+from coli.hrgguru.hrg import CFGRule
+from coli.hrgguru.hyper_graph import strip_category, HyperEdge
 from coli.data_utils.vocab_utils import Dictionary
 
 

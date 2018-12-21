@@ -7,7 +7,6 @@ from torch.nn import Module, Embedding, Linear, LayerNorm
 from coli.basic_tools.common_utils import AttrDict, NoPickle
 from .config import TaggerOptions
 from coli.torch_extra.layers import get_external_embedding, CharacterEmbedding, ContextualUnits
-from coli.torch_extra.utils import convert_to_torch_tensor
 from .crf import CRF
 
 import torch.nn.functional as F

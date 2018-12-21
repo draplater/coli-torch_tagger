@@ -4,11 +4,11 @@ from argparse import ArgumentParser
 from typing import Any, List
 
 import dataclasses
-import numpy as np
 import torch
 
 from bilm.load_vocab import BiLMVocabLoader
-from coli.basic_tools.common_utils import DictionarySubParser, AttrDict, Progbar, NoPickle
+from coli.basic_tools.common_utils import DictionarySubParser, AttrDict, Progbar, NoPickle, try_cache_keeper, \
+    cache_result
 from coli.data_utils.embedding import ExternalEmbeddingLoader
 from coli.torch_extra.layers import get_external_embedding
 from coli.torch_tagger.data_loader import SentenceWithTags, SentenceFeatures, Statistics, DTMLexicalType
@@ -17,15 +17,10 @@ from .config import TaggerOptions
 from .network import TaggerNetwork
 
 
-class SentenceFeaturesPytorch(SentenceFeatures):
-    int_type = np.int64
-    bilm_boundaries = False
-
-
 class Tagger(PyTorchParserBase):
     """"""
     available_data_formats = {"default": SentenceWithTags, "dtm_lexical_type": DTMLexicalType}
-    sentence_feature_class = SentenceFeaturesPytorch
+    sentence_feature_class = SentenceFeatures
 
     @classmethod
     def add_parser_arguments(cls, arg_parser: ArgumentParser):
@@ -51,8 +46,17 @@ class Tagger(PyTorchParserBase):
         else:
             self.bilm_vocab = None
 
-        self.statistics = Statistics.from_sentences(data_train, self.hparams.word_threshold)
-        self.external_embedding_loader = NoPickle(ExternalEmbeddingLoader(args.embed_file))
+        @cache_result(self.options.output + "/statistics.pkl",
+                      enable=self.options.debug_cache)
+        def load_statistics():
+            return Statistics.from_sentences(data_train, self.hparams.word_threshold)
+
+        self.statistics = load_statistics()
+
+        if args.embed_file is not None:
+            self.external_embedding_loader = NoPickle(ExternalEmbeddingLoader(args.embed_file))
+        else:
+            self.external_embedding_loader = None
 
         self.global_step = 0
         self.global_epoch = 1
@@ -181,25 +185,20 @@ class Tagger(PyTorchParserBase):
         for sent_feature, labels_pred in self.get_parsed(bucket):
             sent = sent_feature.original_obj
             new_labels = list(self.statistics.labels.int_to_word[i]
-                              for i in labels_pred[:len(sent)])
+                              for i in labels_pred[:len(sent.words)])
             outputs[sent_feature.original_idx] = dataclasses.replace(sent, labels=new_labels)
         return outputs
 
-    @classmethod
-    def load(cls, prefix, new_options=None):
+    def post_load(self, new_options):
         # TODO: without external embedding?
-        self = torch.load(prefix, map_location="cpu" if not new_options.gpu else "cuda")
         self.options.__dict__.update(new_options.__dict__)
 
-        assert new_options.embed_file, "Embedding file is required"
-        self.external_embedding_loader = NoPickle(ExternalEmbeddingLoader(new_options.embed_file))
-        self.network.pretrained_embeddings = NoPickle(get_external_embedding(self.external_embedding_loader))
-        if new_options.gpu:
-            self.network.pretrained_embeddings.cuda()
+        if self.options.embed_file:
+            assert new_options.embed_file, "Embedding file is required"
+            self.external_embedding_loader = NoPickle(ExternalEmbeddingLoader(new_options.embed_file))
+            self.network.pretrained_embeddings = NoPickle(get_external_embedding(self.external_embedding_loader))
+            if self.options.gpu:
+                self.network.pretrained_embeddings.cuda()
 
-        if new_options.bilm_path:
-            self.network.load_bilm(new_options.bilm_path, new_options.gpu)
-        return self
-
-    def save(self, prefix, latest_filename=None):
-        torch.save(self, prefix)
+        if self.options.bilm_path:
+            self.network.load_bilm(self.options.bilm_path, self.options.gpu)

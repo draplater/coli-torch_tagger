@@ -1,13 +1,15 @@
+import torch
 from typing import List, Optional
 
-import numpy as np
 from dataclasses import dataclass
+from torch import Tensor
 
 from bilm.load_vocab import BiLMVocabLoader
 from coli.basic_tools.common_utils import add_slots
-from coli.data_utils.dataset import lookup_list, lookup_characters, SentenceFeaturesBase, PAD, UNKNOWN, START_OF_WORD, \
+from coli.data_utils.dataset import SentenceFeaturesBase, PAD, UNKNOWN, START_OF_WORD, \
     END_OF_WORD
 from coli.data_utils.vocab_utils import Dictionary
+from coli.torch_extra.dataset import lookup_list, lookup_characters
 
 
 def get_chunk_type(tok, tag_transform=lambda x: x):
@@ -246,17 +248,17 @@ class Statistics(object):
 class SentenceFeatures(SentenceFeaturesBase):
     original_idx: int
     original_obj: SentenceWithTags
-    words: np.ndarray  # [int] (pad_length, )
-    words_pretrained: np.ndarray  # [int] (pad_length, )
-    characters: np.ndarray  # [int] (pad_length, word_pad_length)
-    bilm_characters: np.ndarray
-    labels: np.ndarray  # [int] (pad_length, )
-    postags: np.ndarray  # [int] (pad_length, )
+    words: Tensor  # [int] (pad_length, )
+    words_pretrained: Tensor  # [int] (pad_length, )
+    characters: Tensor  # [int] (pad_length, word_pad_length)
+    bilm_characters: Tensor
+    labels: Tensor  # [int] (pad_length, )
+    postags: Tensor  # [int] (pad_length, )
     sent_length: int
-    char_lengths: np.ndarray  # [int] (pad_length, )
+    char_lengths: Tensor  # [int] (pad_length, )
 
-    int_type = np.int32
-    bilm_boundaries = True
+    int_type = torch.int64
+    bilm_boundaries = False
 
     @classmethod
     def from_sentence_obj(cls, original_idx, sent: SentenceWithTags,
@@ -282,8 +284,8 @@ class SentenceFeatures(SentenceFeaturesBase):
             sent.words, statistics.characters.word_to_int,
             padded_length, 1, dtype=cls.int_type, return_lengths=True)
 
-        bilm_chars_padded = bilm_loader.get_chars_input(
-            sent.words, padded_length, boundaries=cls.bilm_boundaries) \
+        bilm_chars_padded = torch.from_numpy(bilm_loader.get_chars_input(
+            sent.words, padded_length, boundaries=cls.bilm_boundaries)) \
             if bilm_loader is not None else None
 
         # noinspection PyArgumentList
@@ -292,15 +294,21 @@ class SentenceFeatures(SentenceFeaturesBase):
 
     @classmethod
     def get_feed_dict(cls, pls, batch_sentences):
+        # noinspection PyCallingNonCallable
         ret = {
-            pls.words: np.stack([i.words for i in batch_sentences]),
-            pls.words_pretrained: np.stack([i.words_pretrained for i in batch_sentences]),
-            pls.postags: np.stack([i.postags for i in batch_sentences]),
-            pls.chars: np.stack([i.characters for i in batch_sentences]),
-            pls.labels: np.stack([i.labels for i in batch_sentences]),
-            pls.sent_lengths: np.array([i.sent_length for i in batch_sentences]),
-            pls.word_lengths: np.stack([i.char_lengths for i in batch_sentences]),
+            pls.words: torch.stack([i.words for i in batch_sentences]),
+            pls.postags: torch.stack([i.postags for i in batch_sentences]),
+            pls.chars: torch.stack([i.characters for i in batch_sentences]),
+            pls.labels: torch.stack([i.labels for i in batch_sentences]),
+            pls.sent_lengths: torch.tensor([i.sent_length for i in batch_sentences],
+                                           dtype=torch.int64),
+            pls.word_lengths: torch.stack([i.char_lengths for i in batch_sentences])
         }
+
+        if batch_sentences[0].words_pretrained is not None:
+            ret[pls.words_pretrained] = torch.stack([i.words_pretrained for i in batch_sentences])
+
         if batch_sentences[0].bilm_characters is not None:
-            ret[pls.bilm_chars] = np.stack([i.bilm_characters for i in batch_sentences])
+            # noinspection PyCallingNonCallable
+            ret[pls.bilm_chars] = torch.stack([i.bilm_characters for i in batch_sentences])
         return ret

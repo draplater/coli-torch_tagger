@@ -1,19 +1,20 @@
+import shutil
 import sys
 import time
-from argparse import ArgumentParser
 from typing import Any, List
 
-import dataclasses
 import torch
+from dataclasses import dataclass
 
 from bilm.load_vocab import BiLMVocabLoader
 from coli.basic_tools.common_utils import DictionarySubParser, AttrDict, Progbar, NoPickle, try_cache_keeper, \
     cache_result
+from coli.basic_tools.dataclass_argparse import argfield
 from coli.data_utils.embedding import ExternalEmbeddingLoader
 from coli.torch_extra.layers import get_external_embedding
 from coli.torch_tagger.data_loader import SentenceWithTags, SentenceFeatures, Statistics, DTMLexicalType
 from coli.torch_extra.parser_base import PyTorchParserBase
-from .config import TaggerOptions
+from .config import TaggerOptions, get_default_tagger_options
 from .network import TaggerNetwork
 
 
@@ -21,19 +22,13 @@ class Tagger(PyTorchParserBase):
     """"""
     available_data_formats = {"default": SentenceWithTags, "dtm_lexical_type": DTMLexicalType}
     sentence_feature_class = SentenceFeatures
+    target = "label"
 
-    @classmethod
-    def add_parser_arguments(cls, arg_parser: ArgumentParser):
-        super(Tagger, cls).add_parser_arguments(arg_parser)
-        sub_parser = DictionarySubParser("hparams", arg_parser,
-                                         choices={"default": TaggerOptions()},
-                                         title=Tagger.__name__)
-
-    @classmethod
-    def add_common_arguments(cls, arg_parser):
-        super(Tagger, cls).add_common_arguments(arg_parser)
-        arg_parser.add_argument("--embed-file", metavar="FILE")
-        arg_parser.add_argument("--gpu", action="store_true", default=False)
+    @dataclass
+    class Options(PyTorchParserBase.Options):
+        hparams: TaggerOptions = get_default_tagger_options()
+        embed_file: str = argfield(None, predict_time=True, predict_default=None)
+        gpu: bool = argfield(False, predict_time=True, predict_default=False)
 
     def __init__(self, args: Any, data_train):
         super(Tagger, self).__init__(args, data_train)
@@ -77,8 +72,8 @@ class Tagger(PyTorchParserBase):
 
         self.scheduler = torch.optim.lr_scheduler.ReduceLROnPlateau(
             self.optimizer, 'max',
-            factor=self.hparams.step_decay_factor,
-            patience=self.hparams.step_decay_patience,
+            factor=self.hparams.learning.step_decay_factor,
+            patience=self.hparams.learning.step_decay_patience,
             verbose=True,
         )
 
@@ -100,8 +95,9 @@ class Tagger(PyTorchParserBase):
 
     def schedule_lr(self, iteration):
         iteration = iteration + 1
-        warmup_coeff = self.hparams.learning_rate / self.hparams.learning_rate_warmup_steps
-        if iteration <= self.hparams.learning_rate_warmup_steps:
+        warmup_coeff = self.hparams.learning.learning_rate / \
+                       self.hparams.learning.learning_rate_warmup_steps
+        if iteration <= self.hparams.learning. learning_rate_warmup_steps:
             self.set_lr(iteration * warmup_coeff)
 
     def train(self, train_data, dev_args_list=None):
@@ -138,19 +134,22 @@ class Tagger(PyTorchParserBase):
                         for filename, data, buckets in dev_args_list:
                             output_file = self.get_output_name(
                                 self.args.output, filename, self.global_step)
+                            best_output_file = self.get_output_name(
+                                self.args.output, filename, "best")
                             sys.stdout.write("\n")
                             outputs = self.predict_bucket(buckets)
-                            self.evaluate_and_update_best_score(
-                                data, outputs, log_file=output_file + ".txt")
                             with open(output_file, "w") as f:
                                 for output in outputs:
                                     f.write(output.to_string())
+                            self.evaluate_and_update_best_score(
+                                data, outputs, output_file, best_output_file,
+                                log_file=output_file + ".txt")
                     self.network.train()
             self.global_step += 1
 
         self.global_epoch += 1
         self.progbar.finish()
-        if self.global_step > self.hparams.learning_rate_warmup_steps:
+        if self.global_step > self.hparams.learning.learning_rate_warmup_steps:
             self.scheduler.step(self.best_score)
 
     def get_parsed(self, bucket, return_original=True):
@@ -168,8 +167,10 @@ class Tagger(PyTorchParserBase):
                     else:
                         yield parsed
 
-    def evaluate_and_update_best_score(self, gold, outputs, log_file=None):
-        p, r, f1 = SentenceWithTags.internal_evaluate(
+    def evaluate_and_update_best_score(self, gold, outputs,
+                                       output_file, best_output_file, log_file=None):
+        data_format_class = self.get_data_formats()[self.options.data_format]
+        p, r, f1 = data_format_class.internal_evaluate(
             gold, outputs, log_file=log_file)
         last_best_score = self.best_score
         if f1 > last_best_score:
@@ -177,6 +178,8 @@ class Tagger(PyTorchParserBase):
                 f1, last_best_score))
             self.best_score = f1
             self.save(self.args.output + "/model")
+            shutil.copyfile(output_file, best_output_file)
+            shutil.copyfile(log_file, best_output_file + ".txt")
         else:
             self.logger.info("No best score: {:.2f} <= {:.2f}".format(f1, last_best_score))
 
@@ -184,9 +187,9 @@ class Tagger(PyTorchParserBase):
         outputs: List[Any] = [None for _ in range(len(bucket))]
         for sent_feature, labels_pred in self.get_parsed(bucket):
             sent = sent_feature.original_obj
-            new_labels = list(self.statistics.labels.int_to_word[i]
+            new_labels = list(getattr(self.statistics, self.target).int_to_word[i]
                               for i in labels_pred[:len(sent.words)])
-            outputs[sent_feature.original_idx] = dataclasses.replace(sent, labels=new_labels)
+            outputs[sent_feature.original_idx] = sent.replaced_labels(new_labels)
         return outputs
 
     def post_load(self, new_options):

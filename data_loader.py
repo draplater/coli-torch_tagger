@@ -1,3 +1,4 @@
+import dataclasses
 import torch
 from typing import List, Optional
 
@@ -121,6 +122,9 @@ class SentenceWithTags(object):
         return "\n".join(["\t".join([word, label, postag])
                           for word, label, postag in zip(
                 self.words, self.labels, self.postags)]) + "\n\n"
+
+    def replaced_labels(self, new_labels):
+        return dataclasses.replace(self, labels=new_labels)
 
     @classmethod
     def internal_evaluate(cls, gold_sents: List["SentenceWithTags"],

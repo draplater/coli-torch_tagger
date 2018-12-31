@@ -2,11 +2,11 @@ import os
 
 import torch
 from allennlp.modules import Elmo
-from torch.nn import Module, Embedding, Linear, LayerNorm
+from torch.nn import Module, Embedding, Linear, LayerNorm, LeakyReLU
 
 from coli.basic_tools.common_utils import AttrDict, NoPickle
 from .config import TaggerOptions
-from coli.torch_extra.layers import get_external_embedding, CharacterEmbedding, ContextualUnits
+from coli.torch_extra.layers import get_external_embedding, CharacterEmbedding, ContextualUnits, create_mlp
 from .crf import CRF
 
 import torch.nn.functional as F
@@ -43,31 +43,23 @@ class TaggerNetwork(Module):
         elif hparams.dim_char > 0:
             self.bilm = None
             self.character_lookup = Embedding(len(statistics.characters), hparams.dim_char)
-            self.char_embeded = CharacterEmbedding.get_char_embedding(hparams)
+            self.char_embeded = CharacterEmbedding.get(hparams.character_embedding, input_size=hparams.dim_char)
             total_input_dim += hparams.dim_char
         else:
             self.bilm = None
             self.character_lookup = self.char_embeded = None
 
         self.input_layer_norm = LayerNorm(total_input_dim) \
-            if hparams.layer_norm else None
+            if hparams.input_layer_norm else None
 
         # RNN
-        self.rnn = ContextualUnits.get(total_input_dim, hparams)
+        self.rnn = ContextualUnits.get(hparams.contextual, input_size=total_input_dim)
 
-        # self.projection = Sequential(
-        #     Linear(hparams.lstm_size * 2,
-        #                      hparams.dim_hidden,
-        #                      bias=True),
-        #     LeakyReLU(0.1),
-        #     Linear(hparams.dim_hidden,
-        #                          self.label_count,
-        #                          bias=True),
-        # )
-
-        self.projection = Linear(hparams.lstm_size * 2,
-                                 self.label_count,
-                                 bias=True)
+        self.projection = create_mlp(self.rnn.output_dim,
+                                     self.label_count,
+                                     hidden_dims=self.hparams.dims_hidden,
+                                     last_bias=True,
+                                     activation=lambda: LeakyReLU(0.1))
 
         if self.hparams.use_crf:
             self.crf_unit = CRF(self.label_count)
@@ -89,19 +81,12 @@ class TaggerNetwork(Module):
         else:
             self.bilm.scalar_mix_0 = self.scalar_mix
 
-
     def reset_parameters(self):
         torch.nn.init.xavier_normal_(self.word_embeddings.weight.data)
         if self.hparams.dim_postag != 0:
             torch.nn.init.xavier_normal_(self.pos_embeddings.weight.data)
         if self.character_lookup is not None:
             torch.nn.init.xavier_normal_(self.character_lookup.weight.data)
-
-        for name, param in self.projection.named_parameters():
-            if name.endswith("bias"):
-                torch.nn.init.zeros_(param.data)
-            else:
-                torch.nn.init.xavier_normal_(param.data)
 
     def forward(self, batch_sentences, inputs):
         # input embedding
@@ -142,8 +127,7 @@ class TaggerNetwork(Module):
             total_input_embeded = self.input_layer_norm(total_input_embeded)
 
         sent_lengths = inputs.sent_lengths.to(device)
-        contextual_output = self.rnn(total_input_embeded,
-                                     lengths=sent_lengths)
+        contextual_output = self.rnn(total_input_embeded, sent_lengths)
 
         batch_size, max_sent_length = words.shape
         logits_flat = self.projection(contextual_output.contiguous().view(
@@ -168,7 +152,7 @@ class TaggerNetwork(Module):
             losses = torch.nn.functional.cross_entropy(
                 logits_flat, flat_labels, reduction='none')
             losses = losses.masked_select(mask_1d)
-            loss = losses.mean()
+            loss = losses.sum() / words.shape[0]
 
         if self.training or not self.hparams.use_crf:
             labels_pred_flat = torch.argmax(logits_flat, dim=-1)
@@ -180,8 +164,11 @@ class TaggerNetwork(Module):
             mask_2d & torch.eq(answer, labels_pred))
 
         return AttrDict({"labels_pred": labels_pred,
+                         "contextual_output": contextual_output,
                          "answer": answer,
                          "loss": loss,
+                         "word_mask": mask_2d,
+                         "logits": logits_3d,
                          "total_count": total_count, "correct_count": correct_count,
                          "lengths": sent_lengths,
                          "sent_count": inputs.words.shape[0]

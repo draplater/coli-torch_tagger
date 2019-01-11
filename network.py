@@ -4,13 +4,11 @@ import torch
 from torch.nn import Module, Embedding, LayerNorm, LeakyReLU
 
 from coli.basic_tools.common_utils import AttrDict, NoPickle
-from coli.tf_extra.elmo_manager import get_elmo
+from coli.torch_extra.elmo_manager import get_elmo
 from coli.torch_extra.utils import cross_entropy_nd
 from .config import TaggerOptions
 from coli.torch_extra.layers import get_external_embedding, CharacterEmbedding, ContextualUnits, create_mlp
 from .crf import CRF
-
-import torch.nn.functional as F
 
 
 class SentenceEmbeddings(Module):

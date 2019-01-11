@@ -12,6 +12,7 @@ from coli.basic_tools.common_utils import DictionarySubParser, AttrDict, Progbar
 from coli.basic_tools.dataclass_argparse import argfield
 from coli.data_utils.embedding import ExternalEmbeddingLoader
 from coli.torch_extra.layers import get_external_embedding
+from coli.torch_extra.utils import to_cuda
 from coli.torch_tagger.data_loader import SentenceWithTags, SentenceFeatures, Statistics, DTMLexicalType
 from coli.torch_extra.parser_base import PyTorchParserBase
 from .config import TaggerOptions, get_default_tagger_options
@@ -33,7 +34,7 @@ class Tagger(PyTorchParserBase):
     def __init__(self, args: Any, data_train):
         super(Tagger, self).__init__(args, data_train)
 
-        self.args = args
+        self.args: Tagger.Options = args
         self.hparams: TaggerOptions = args.hparams
 
         if self.args.bilm_path is not None:
@@ -77,7 +78,7 @@ class Tagger(PyTorchParserBase):
             verbose=True,
         )
 
-        if self.options.gpu:
+        if self.args.gpu:
             self.network.cuda()
 
         self.progbar = NoPickle(Progbar(self.hparams.train_iters, log_func=self.file_logger.info))
@@ -97,7 +98,7 @@ class Tagger(PyTorchParserBase):
         iteration = iteration + 1
         warmup_coeff = self.hparams.learning.learning_rate / \
                        self.hparams.learning.learning_rate_warmup_steps
-        if iteration <= self.hparams.learning. learning_rate_warmup_steps:
+        if iteration <= self.hparams.learning.learning_rate_warmup_steps:
             self.set_lr(iteration * warmup_coeff)
 
     def train(self, train_data, dev_args_list=None):
@@ -108,9 +109,11 @@ class Tagger(PyTorchParserBase):
         self.network.train()
         for batch_sents, feed_dict in train_data.generate_batches(
                 self.hparams.train_batch_size,
-                shuffle=True, original=True,
+                shuffle=True, original=True
                 # sort_key_func=lambda x: x.sent_length
         ):
+            if self.args.gpu:
+                to_cuda(feed_dict)
             self.schedule_lr(self.global_step)
             self.optimizer.zero_grad()
             output = self.network(batch_sents, AttrDict(feed_dict))
@@ -156,10 +159,10 @@ class Tagger(PyTorchParserBase):
         self.network.eval()
         with torch.no_grad():
             for batch_sent, feed_dict in bucket.generate_batches(
-                    self.hparams.test_batch_size,
-                    original=True,
-                    # sort_key_func=lambda x: x.sent_length
+                    self.hparams.test_batch_size, original=True,
             ):
+                if self.args.gpu:
+                    to_cuda(feed_dict)
                 results = self.network(batch_sent, AttrDict(feed_dict))
                 for original, parsed in zip(batch_sent, results.labels_pred.cpu().numpy()):
                     if return_original:
@@ -167,12 +170,15 @@ class Tagger(PyTorchParserBase):
                     else:
                         yield parsed
 
+    def evaluate(self, gold, outputs, log_file):
+        data_format_class = self.get_data_formats()[self.options.data_format]
+        return data_format_class.internal_evaluate(
+            gold, outputs, log_file)
+
     def evaluate_and_update_best_score(self, gold, outputs,
                                        output_file, best_output_file, log_file=None):
-        data_format_class = self.get_data_formats()[self.options.data_format]
-        p, r, f1 = data_format_class.internal_evaluate(
-            gold, outputs, log_file=log_file)
         last_best_score = self.best_score
+        p, r, f1 = self.evaluate(gold, outputs, log_file)
         if f1 > last_best_score:
             self.logger.info("New best score: {:.2f} > {:.2f}, saving model...".format(
                 f1, last_best_score))

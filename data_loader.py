@@ -281,7 +281,9 @@ class SentenceFeatures(SentenceFeaturesBase):
             padded_length=padded_length, default=0, dtype=cls.int_type) \
             if external_lookup is not None else None
         labels_int = lookup_list(sent.labels, statistics.labels.word_to_int,
-                                 padded_length=padded_length, default=0, dtype=cls.int_type)
+                                 padded_length=padded_length, default=0, dtype=cls.int_type,
+                                 tensor_factory=lambda shape, *, dtype: torch.full(shape, -100, dtype=dtype)
+                                 )
         postags_int = lookup_list(sent.postags, statistics.postags.word_to_int,
                                   padded_length=padded_length, default=1, dtype=cls.int_type)
         char_lengths, chars_int = lookup_characters(

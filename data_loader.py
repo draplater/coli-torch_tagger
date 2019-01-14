@@ -141,11 +141,12 @@ class SentenceWithTags(object):
         p = correct_preds / total_preds if correct_preds > 0 else 0
         r = correct_preds / total_correct if correct_preds > 0 else 0
         f1 = 2 * p * r / (p + r) if correct_preds > 0 else 0
+        log_str = "P: {:.2f}, R: {:.2f}, F: {:.2f}".format(p * 100, r * 100, f1 * 100)
+        print(log_str)
         if log_file is not None:
             with open(log_file, "w") as f:
-                print("P: {:.2f}, R: {:.2f}, F: {:.2f}".format(p * 100, r * 100, f1 * 100),
-                      file=f)
-        return p * 100, r * 100, f1 * 100
+                print(log_str, file=f)
+        return f1 * 100
 
     @classmethod
     def evaluate_with_external_program(cls, gold_file, system_file):

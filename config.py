@@ -1,12 +1,12 @@
 from dataclasses import dataclass, field
 
 from coli.basic_tools.dataclass_argparse import argfield
-from coli.data_utils.dataset import HParamsBase
-from coli.torch_extra.layers import CharacterEmbedding, ContextualUnits, AdvancedLearningOptions
+from coli.torch_extra.layers import CharacterEmbedding, ContextualUnits
+from coli.torch_extra.parser_base import SimpleParser
 
 
 @dataclass
-class TaggerOptions(HParamsBase):
+class TaggerHParams(SimpleParser.HParams):
     train_iters: "Count of training step" = 10000
     evaluate_every: int = 100
 
@@ -26,12 +26,11 @@ class TaggerOptions(HParamsBase):
         default_factory=CharacterEmbedding.Options)
     contextual: ContextualUnits.Options = field(
         default_factory=ContextualUnits.Options)
-    learning: AdvancedLearningOptions = field(
-        default_factory=AdvancedLearningOptions)
 
+    @classmethod
+    def get_default(cls):
+        default_tagger_hparams = cls()
+        default_tagger_hparams.contextual.lstm_options.num_layers = 1
+        default_tagger_hparams.contextual.lstm_options.recurrent_keep_prob = 1.0
+        return default_tagger_hparams
 
-def get_default_tagger_options(factory=TaggerOptions):
-    default_tagger_options = factory()
-    default_tagger_options.contextual.lstm_options.num_layers = 1
-    default_tagger_options.contextual.lstm_options.recurrent_keep_prob = 1.0
-    return default_tagger_options

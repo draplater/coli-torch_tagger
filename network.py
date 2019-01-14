@@ -6,8 +6,8 @@ from torch.nn import Module, Embedding, LayerNorm, LeakyReLU
 from coli.basic_tools.common_utils import AttrDict, NoPickle
 from coli.torch_extra.elmo_manager import get_elmo
 from coli.torch_extra.utils import cross_entropy_nd
-from .config import TaggerOptions
 from coli.torch_extra.layers import get_external_embedding, CharacterEmbedding, ContextualUnits, create_mlp
+from coli.torch_tagger.config import TaggerHParams
 from .crf import CRF
 
 
@@ -80,7 +80,7 @@ class SentenceEmbeddings(Module):
         word_embeded = self.word_embeddings(words)
 
         if self.pretrained_embeddings is not None:
-            pretrained_word_embeded = self.pretrained_embeddings(inputs.words_pretrained.to(device))
+            pretrained_word_embeded = self.pretrained_embeddings(inputs.words_pretrained)
             word_embeded += pretrained_word_embeded
 
         # pos
@@ -116,7 +116,7 @@ class SentenceEmbeddings(Module):
 class TaggerNetwork(Module):
     """"""
 
-    def __init__(self, hparams: TaggerOptions,
+    def __init__(self, hparams: TaggerHParams,
                  statistics, external_word_embedding_loader=None,
                  bilm_path=None,
                  target="labels"):
@@ -161,6 +161,9 @@ class TaggerNetwork(Module):
 
         if self.hparams.use_crf:
             norm_scores = self.crf_unit(logits_3d, sent_lengths)
+            # strip "-100"
+            # noinspection PyCallingNonCallable
+            answer = torch.max(answer, torch.tensor(0, device=answer.device))
             lstm_scores = torch.gather(logits_3d, 2, answer.unsqueeze(-1)).squeeze(-1)
             lstm_scores_masked = (lstm_scores * mask_2d.float()).sum(-1)
             transition_scores = self.crf_unit.transition_score(answer, sent_lengths)

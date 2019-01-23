@@ -29,10 +29,7 @@ class Tagger(SimpleParser):
 
         self.statistics = load_statistics()
 
-        self.network = TaggerNetwork(self.hparams, self.statistics,
-                                     self.external_embedding_loader,
-                                     bilm_path=args.bilm_path
-                                     )
+        self.network = TaggerNetwork(self.hparams, self.statistics, self.plugins)
         if self.args.gpu:
             self.network.cuda()
 

@@ -221,7 +221,6 @@ class Statistics(object):
     labels: Dictionary
     postags: Dictionary
     characters: Dictionary
-    words_lite: Dictionary = None
 
     @classmethod
     def from_sentences(cls, sents: List[SentenceWithTags],
@@ -241,7 +240,7 @@ class Statistics(object):
                 result.characters.update(word)
 
         if word_threshold > 0:
-            result.words_lite = result.words.strip_low_freq(
+            result.words = result.words.strip_low_freq(
                 min_count=word_threshold,
                 ensure=("___PAD___", "___UNKNOWN___")
             )
@@ -251,16 +250,14 @@ class Statistics(object):
 @add_slots
 @dataclass
 class SentenceFeatures(SentenceFeaturesBase):
-    original_idx: int
-    original_obj: SentenceWithTags
-    words: Tensor  # [int] (pad_length, )
-    words_pretrained: Tensor  # [int] (pad_length, )
-    characters: Tensor  # [int] (pad_length, word_pad_length)
-    bilm_characters: Tensor
-    labels: Tensor  # [int] (pad_length, )
-    postags: Tensor  # [int] (pad_length, )
-    sent_length: int
-    char_lengths: Tensor  # [int] (pad_length, )
+    original_idx: int = None
+    original_obj: SentenceWithTags = None
+    words: Tensor = None  # [int] (pad_length, )
+    characters: Tensor = None  # [int] (pad_length, word_pad_length)
+    labels: Tensor = None  # [int] (pad_length, )
+    postags: Tensor = None  # [int] (pad_length, )
+    sent_length: int = -1
+    char_lengths: Tensor = None  # [int] (pad_length, )
 
     int_type = torch.int64
     bilm_boundaries = False
@@ -268,39 +265,34 @@ class SentenceFeatures(SentenceFeaturesBase):
     @classmethod
     def from_sentence_obj(cls, original_idx, sent: SentenceWithTags,
                           statistics: Statistics,
-                          external_lookup,
                           padded_length, lower=True,
-                          bilm_loader: Optional[BiLMVocabLoader] = None
+                          plugins=None
                           ):
-        sent_length = len(sent.words)
+        ret = cls(original_idx=original_idx, original_obj=sent)
+        ret.sent_length = len(sent.words)
         lower_func = lambda x: x.lower() if lower else lambda x: x
-        words_int = lookup_list(
-            (lower_func(i) for i in sent.words), statistics.words_lite.word_to_int,
+
+        ret.words = lookup_list(
+            (lower_func(i) for i in sent.words), statistics.words.word_to_int,
             padded_length=padded_length, default=1, dtype=cls.int_type)
-        words_pretrained_int = lookup_list(
-            (lower_func(i) for i in sent.words), external_lookup,
-            padded_length=padded_length, default=0, dtype=cls.int_type) \
-            if external_lookup is not None else None
-        labels_int = lookup_list(sent.labels, statistics.labels.word_to_int,
+        ret.labels = lookup_list(sent.labels, statistics.labels.word_to_int,
                                  padded_length=padded_length, default=0, dtype=cls.int_type,
                                  tensor_factory=lambda shape, *, dtype: torch.full(shape, -100, dtype=dtype)
                                  )
-        postags_int = lookup_list(sent.postags, statistics.postags.word_to_int,
+        ret.postags = lookup_list(sent.postags, statistics.postags.word_to_int,
                                   padded_length=padded_length, default=1, dtype=cls.int_type)
-        char_lengths, chars_int = lookup_characters(
+        ret.char_lengths, ret.characters = lookup_characters(
             sent.words, statistics.characters.word_to_int,
             padded_length, 1, dtype=cls.int_type, return_lengths=True)
 
-        bilm_chars_padded = torch.from_numpy(bilm_loader.get_chars_input(
-            sent.words, padded_length, boundaries=cls.bilm_boundaries)) \
-            if bilm_loader is not None else None
+        if plugins:
+            for plugin in plugins.values():
+                plugin.process_sentence_feature(sent, ret, padded_length)
 
-        # noinspection PyArgumentList
-        return cls(original_idx, sent, words_int, words_pretrained_int, chars_int, bilm_chars_padded,
-                   labels_int, postags_int, sent_length, char_lengths)
+        return ret
 
     @classmethod
-    def get_feed_dict(cls, pls, batch_sentences):
+    def get_feed_dict(cls, pls, batch_sentences, plugins=None):
         # noinspection PyCallingNonCallable
         ret = {
             pls.words: torch.stack([i.words for i in batch_sentences]),
@@ -312,10 +304,8 @@ class SentenceFeatures(SentenceFeaturesBase):
             pls.word_lengths: torch.stack([i.char_lengths for i in batch_sentences])
         }
 
-        if batch_sentences[0].words_pretrained is not None:
-            ret[pls.words_pretrained] = torch.stack([i.words_pretrained for i in batch_sentences])
+        if plugins:
+            for plugin in plugins.values():
+                plugin.process_batch(pls, ret, batch_sentences)
 
-        if batch_sentences[0].bilm_characters is not None:
-            # noinspection PyCallingNonCallable
-            ret[pls.bilm_chars] = torch.stack([i.bilm_characters for i in batch_sentences])
         return ret

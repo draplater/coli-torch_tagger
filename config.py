@@ -13,6 +13,7 @@ class TaggerHParams(SimpleParser.HParams):
 
     dims_hidden: "dims of hidden layers" = argfield(default_factory=lambda: [100],
                                                     nargs="+")
+    mlp_dropout: float = 0.33
 
     # NOTE: if both chars and crf, only 1.6x slower on GPU
     use_crf: "if crf, training is 1.7x slower on CPU" = True

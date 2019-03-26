@@ -1,4 +1,3 @@
-
 import torch
 from torch.nn import Module, LeakyReLU
 
@@ -29,6 +28,7 @@ class TaggerNetwork(Module):
         self.projection = create_mlp(self.rnn.output_dim,
                                      self.label_count,
                                      hidden_dims=self.hparams.dims_hidden,
+                                     dropout=hparams.mlp_dropout,
                                      layer_norm=True,
                                      last_bias=True,
                                      activation=lambda: LeakyReLU(0.1))

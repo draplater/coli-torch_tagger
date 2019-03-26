@@ -261,6 +261,7 @@ class SentenceFeatures(SentenceFeaturesBase):
 
     int_type = torch.int64
     bilm_boundaries = False
+    bert_boundaries = False
 
     @classmethod
     def from_sentence_obj(cls, original_idx, sent: SentenceWithTags,

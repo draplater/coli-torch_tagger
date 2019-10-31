@@ -5,12 +5,14 @@ from typing import List, Optional
 from dataclasses import dataclass
 from torch import Tensor
 
-from bilm.load_vocab import BiLMVocabLoader
 from coli.basic_tools.common_utils import add_slots
 from coli.data_utils.dataset import SentenceFeaturesBase, PAD, UNKNOWN, START_OF_WORD, \
-    END_OF_WORD
+    END_OF_WORD, DataFormatBase
 from coli.data_utils.vocab_utils import Dictionary
 from coli.torch_extra.dataset import lookup_list, lookup_characters
+
+
+print_func = print
 
 
 def get_chunk_type(tok, tag_transform=lambda x: x):
@@ -84,10 +86,12 @@ def get_chunks(seq, tag_dict=None, none_tag="O"):
 
 @add_slots
 @dataclass
-class SentenceWithTags(object):
+class SentenceWithTags(DataFormatBase):
     words: List[str]
     labels: List[str]
     postags: List[str]
+
+    has_internal_evaluate_func = True
 
     @classmethod
     def from_file(cls, path, keep_tag=True):
@@ -129,7 +133,8 @@ class SentenceWithTags(object):
     @classmethod
     def internal_evaluate(cls, gold_sents: List["SentenceWithTags"],
                           system_sents: List["SentenceWithTags"],
-                          log_file: str = None
+                          log_file: str = None,
+                          print: bool = True
                           ):
         correct_preds, total_correct, total_preds = 0., 0., 0.
         for gold_sent, system_sent in zip(gold_sents, system_sents):
@@ -142,20 +147,11 @@ class SentenceWithTags(object):
         r = correct_preds / total_correct if correct_preds > 0 else 0
         f1 = 2 * p * r / (p + r) if correct_preds > 0 else 0
         log_str = "P: {:.2f}, R: {:.2f}, F: {:.2f}".format(p * 100, r * 100, f1 * 100)
-        print(log_str)
+        print_func(log_str)
         if log_file is not None:
             with open(log_file, "w") as f:
-                print(log_str, file=f)
+                f.write(log_str)
         return f1 * 100
-
-    @classmethod
-    def evaluate_with_external_program(cls, gold_file, system_file):
-        p, r, f1 = cls.internal_evaluate(cls.from_file(gold_file),
-                                         cls.from_file((system_file)))
-        print("P: {:.2f}, R: {:.2f}, F: {:.2f}".format(p, r, f1))
-        with open(gold_file + ".txt", "w") as f:
-            print("P: {:.2f}, R: {:.2f}, F: {:.2f}".format(p, r, f1),
-                  file=f)
 
     def __len__(self):
         return len(self.words)
